@@ -1,3 +1,4 @@
+import express from 'express';
 import { z } from 'zod';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
@@ -37,18 +38,32 @@ function getServer() {
   return server;
 }
 
-const app = createMcpExpressApp({ allowedHosts: ['midas.arcane-magus.site', 'localhost', '127.0.0.1'] });
+const mcpApp = createMcpExpressApp({ allowedHosts: ['midas.arcane-magus.site', 'localhost', '127.0.0.1'] });
 
+const app = express();
 app.use((req, res, next) => {
+  const start = Date.now();
+  console.log(`[req] ${req.method} ${req.originalUrl} host=${req.headers.host} ua=${req.headers['user-agent']} cf-connecting-ip=${req.headers['cf-connecting-ip']} accept=${req.headers.accept}`);
+  res.on('finish', () => {
+    console.log(`[res] ${req.method} ${req.originalUrl} status=${res.statusCode} ms=${Date.now() - start}`);
+  });
+  next();
+});
+app.use(mcpApp);
+
+mcpApp.use((req, res, next) => {
   const header = req.headers.authorization;
-  if (header !== `Bearer ${BEARER_TOKEN}`) {
+  const expected = `Bearer ${BEARER_TOKEN}`;
+  if (header !== expected) {
+    const preview = header ? `len=${header.length} starts="${header.slice(0, 12)}" ends="${header.slice(-6)}"` : 'MISSING';
+    console.log(`[auth-mismatch] got: ${preview} | expected len=${expected.length} starts="${expected.slice(0, 12)}" ends="${expected.slice(-6)}"`);
     res.status(401).json({ error: 'unauthorized' });
     return;
   }
   next();
 });
 
-app.post('/mcp', async (req, res) => {
+mcpApp.post('/mcp', async (req, res) => {
   const server = getServer();
   const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
   res.on('close', () => {
@@ -59,7 +74,7 @@ app.post('/mcp', async (req, res) => {
   await transport.handleRequest(req, res, req.body);
 });
 
-app.get('/pending-actions', (req, res) => {
+mcpApp.get('/pending-actions', (req, res) => {
   res.json({ actions: fetchAndClearPendingActions() });
 });
 
